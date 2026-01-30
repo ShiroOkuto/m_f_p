@@ -100,9 +100,9 @@ class FFmpegManager:
             "-hide_banner",
             "-loglevel", "warning",
             # --- CRITICAL: Timestamp and sync fixes ---
-            "-fflags", "+genpts+discardcorrupt+igndts",
-            "-analyzeduration", "10000000",
-            "-probesize", "10000000",
+            "-fflags", "+genpts+discardcorrupt+igndts+sortdts",
+            "-analyzeduration", "20000000",
+            "-probesize", "20000000",
             # --- Network resilience ---
             "-reconnect", "1",
             "-reconnect_streamed", "1",
@@ -132,9 +132,7 @@ class FFmpegManager:
                     logger.info(f"Added {len(keys_to_use)} decryption key(s) to FFmpeg command")
             except Exception as e:
                 logger.error(f"Error parsing clearkey: {e}")
-        
-        # Use wallclock timestamps to prevent jumps due to source timestamp resets/loops
-        cmd.extend(["-use_wallclock_as_timestamps", "1"])
+
         cmd.extend(["-i", url])
 
         # Explicit mapping to ensure video is selected
@@ -153,7 +151,7 @@ class FFmpegManager:
         cmd.extend([
             "-bsf:v", "h264_mp4toannexb",
             "-avoid_negative_ts", "make_zero",
-            "-max_muxing_queue_size", "2048",
+            "-max_muxing_queue_size", "4096",
             "-f", "hls",
             "-hls_time", "2",
             "-hls_list_size", "15",
