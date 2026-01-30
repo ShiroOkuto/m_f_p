@@ -1,8 +1,8 @@
-name: Force Sync Fork and Build Docker Image (No Push)
+name: Force Sync Fork (Incremental) and Build Docker Image (No Push)
 
 on:
   schedule:
-    - cron: '0 * * * *'  # ogni ora
+    - cron: '0 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
@@ -12,54 +12,90 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout the repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
 
       - name: Configure Git
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-      - name: Add upstream remote
-        run: git remote add upstream https://github.com/stremio-manager/mediaflow-proxy
+      - name: Add upstream repositories
+        run: |
+          git remote add upstream https://github.com/stremio-manager/mediaflow-proxy.git
+          git remote add upstream2 https://github.com/mhdzumair/mediaflow-proxy.git
 
       - name: Fetch upstream changes
-        run: git fetch upstream
-
-      - name: Force sync fork from upstream, preserve workflow and launcher.py
         run: |
-          # Salva launcher.py se esiste
+          git fetch upstream
+          git fetch upstream2
+
+      - name: Incremental sync from upstreams
+        run: |
+          set -e
+
+          echo "📦 Backup launcher.py"
           if [ -f launcher.py ]; then
             cp launcher.py /tmp/launcher.py
           fi
 
-          # Salva i workflow personalizzati
+          echo "📦 Backup workflows"
           mkdir -p /tmp/workflows
           cp .github/workflows/*.yml /tmp/workflows/ || true
 
-          # Reset hard all'upstream
+          echo "🔄 Reset HARD to primary upstream"
           git reset --hard upstream/main
 
-          # Ripristina i workflow
+          LAST_FILE=".upstream2-last-commit"
+
+          if [ -f "$LAST_FILE" ]; then
+            LAST_COMMIT=$(cat "$LAST_FILE")
+            echo "🧠 Last applied commit: $LAST_COMMIT"
+            NEW_COMMITS=$(git log --reverse ${LAST_COMMIT}..upstream2/main --pretty=format:%H)
+          else
+            echo "🆕 First run: applying all commits from upstream2"
+            NEW_COMMITS=$(git log --reverse upstream2/main --pretty=format:%H)
+          fi
+
+          if [ -n "$NEW_COMMITS" ]; then
+            echo "➕ Applying new commits:"
+            for commit in $NEW_COMMITS; do
+              echo "  - $commit"
+              git cherry-pick $commit || {
+                echo "❌ Conflict on commit $commit – aborting cherry-pick"
+                git cherry-pick --abort
+                exit 0
+              }
+            done
+          else
+            echo "✅ No new commits to apply"
+          fi
+
+          echo "📝 Update last applied commit file"
+          git rev-parse upstream2/main > $LAST_FILE
+          git add $LAST_FILE
+
+          echo "♻️ Restore workflows"
           mkdir -p .github/workflows
           cp /tmp/workflows/*.yml .github/workflows/ || true
           git add .github/workflows || true
 
-          # Ripristina launcher.py
+          echo "♻️ Restore launcher.py"
           if [ -f /tmp/launcher.py ]; then
             mv /tmp/launcher.py launcher.py
             git add launcher.py
           fi
 
-          # Commit e push forzato
-          git commit -m "Restore workflows and launcher.py after forced sync" || echo "No changes to commit"
+          echo "🚀 Commit and force push"
+          git commit -m "Incremental sync: upstream + new commits from mhdzumair" || echo "No changes to commit"
           git push origin main --force
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---- PARTE DOCKER (SOLO BUILD, NIENTE PUSH) ----
+      # ---- DOCKER BUILD (NO PUSH) ----
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
