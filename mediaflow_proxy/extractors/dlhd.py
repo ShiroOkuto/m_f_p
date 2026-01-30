@@ -156,7 +156,7 @@ class DLHDExtractor(BaseExtractor):
                         status=response.status,
                         headers=dict(response.headers),
                         text=content,
-                        content=await response.read(),
+                        content=raw_body,
                         url=str(response.url)
                     )
             except Exception as e:
@@ -404,7 +404,18 @@ class DLHDExtractor(BaseExtractor):
                 try:
                     iframe_url = f'https://{host}/premiumtv/daddyhd.php?id={cid}'
                     logger.info(f"🔍 Attempting extraction from: {iframe_url}")
-                    resp = await self._make_robust_request(iframe_url, retries=2)
+                    
+                    embed_headers = {
+                        'User-Agent': self.USER_AGENT,
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Referer': 'https://dlhd.dad/',
+                        'sec-ch-ua': '"Chromium";v="136", "Google Chrome";v="136"',
+                        'sec-ch-ua-mobile': '?0',
+                        'sec-ch-ua-platform': '"macOS"',
+                    }
+                    
+                    resp = await self._make_robust_request(iframe_url, headers=embed_headers, retries=2)
                     content = resp.text
                     
                     if 'lovecdn.ru' in content:
