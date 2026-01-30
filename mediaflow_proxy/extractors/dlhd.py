@@ -149,14 +149,34 @@ class DLHDExtractor(BaseExtractor):
                 session, proxy_url = await self._get_session()
                 async with session.get(url, headers=final_headers, ssl=False, auto_decompress=False, proxy=proxy_url) as response:
                     response.raise_for_status()
-                    content = await self._handle_response_content(response)
+                    raw_content = await response.read()
+                    
+                    # Decompress content based on encoding
+                    content_encoding = response.headers.get('Content-Encoding')
+                    try:
+                        if content_encoding == 'zstd' and zstandard:
+                            dctx = zstandard.ZstdDecompressor()
+                            with dctx.stream_reader(raw_content) as reader:
+                                decompressed_body = reader.read()
+                            text_content = decompressed_body.decode(response.charset or 'utf-8')
+                        elif content_encoding == 'gzip':
+                            decompressed_body = gzip.decompress(raw_content)
+                            text_content = decompressed_body.decode(response.charset or 'utf-8')
+                        elif content_encoding == 'deflate':
+                            decompressed_body = zlib.decompress(raw_content)
+                            text_content = decompressed_body.decode(response.charset or 'utf-8')
+                        else:
+                            text_content = raw_content.decode(response.charset or 'utf-8', errors='replace')
+                    except Exception as e:
+                        logger.error(f"Decompression/decoding error from {response.url}: {e}")
+                        raise ExtractorError(f"Decompression failure for {response.url}: {e}")
                     
                     # Return a compatibility object that looks like HttpResponse
                     return HttpResponse(
                         status=response.status,
                         headers=dict(response.headers),
-                        text=content,
-                        content=raw_body,
+                        text=text_content,
+                        content=raw_content,
                         url=str(response.url)
                     )
             except Exception as e:
