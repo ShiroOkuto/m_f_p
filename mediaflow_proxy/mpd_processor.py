@@ -138,8 +138,8 @@ async def process_segment(
     Returns:
         Response: The decrypted segment as an HTTP response.
     """
-    if key_id and key:
-        # For DRM protected content
+    if key:
+        # For DRM protected content (handles both single and multi-key)
         now = time.time()
         decrypted_content = decrypt_segment(init_content, segment_content, key_id, key, include_init=not use_map)
         logger.info(f"Decryption of {mimetype} segment took {time.time() - now:.4f} seconds")
@@ -240,7 +240,7 @@ async def process_init_segment(
     Returns:
         Response: The processed init segment as an HTTP response.
     """
-    if key_id and key:
+    if key:
         # Check if we have a cached processed version
         if init_url:
             cached_processed = await get_cached_processed_init(init_url, key_id)

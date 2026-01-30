@@ -105,38 +105,62 @@ def sanitize_url(url: str) -> str:
 def extract_drm_params_from_url(url: str) -> tuple[str, str, str]:
     """
     Extract DRM parameters (key_id and key) from a URL if they are incorrectly appended.
+    Supports multiple occurrences for multi-key DRM, including hybrid IPTV formats.
 
     Args:
         url (str): The URL that may contain appended DRM parameters.
 
     Returns:
-        tuple: (clean_url, key_id, key) where clean_url has the parameters removed,
-               and key_id/key are the extracted values (or None if not found).
+        tuple: (clean_url, key_id, key) where clean_url has the parameters removed.
     """
-    key_id = None
-    key = None
+    key_ids = []
+    keys = []
     clean_url = url
 
-    # Check if URL contains incorrectly appended key_id and key parameters
+    # 1. First, handle the hybrid case seen in some IPTV lists: &key_id=ID&key=K,key_id=ID&key=K
+    # This format is distinctive because of the comma following the key value.
     if "&key_id=" in url and "&key=" in url:
-        # Extract key_id
-        key_id_match = re.search(r"&key_id=([^&]+)", url)
-        if key_id_match:
-            key_id = key_id_match.group(1)
+        # Match all occurrences of key_id=...&key=...
+        # We look for key_id and key as a pair, possibly separated by commas or ampersands
+        pairs = re.findall(r"key_id=([a-fA-F0-9\-]+)&key=([a-fA-F0-9\-:]+)", url)
+        if pairs:
+            for kid, k in pairs:
+                # If the key itself contains key_id (iptv hybrid), strip it
+                if ",key_id=" in k:
+                    k = k.split(",key_id=")[0]
+                key_ids.append(kid.replace("-", ""))
+                keys.append(k.replace("-", ""))
+            
+            # Clean up the URL by removing ALL DRM related parameters
+            clean_url = re.sub(r"&key_id=[^&]*", "", url)
+            clean_url = re.sub(r"&key=[^&]*", "", clean_url)
+            clean_url = re.sub(r"\?key_id=[^&]*&?", "?", clean_url)
+            clean_url = re.sub(r"\?key=[^&]*&?", "?", clean_url)
+    
+    # 2. Fallback to standard parameter extraction if pairs didn't catch everything
+    if not key_ids:
+        key_id_matches = re.findall(r"(?:&|\?)key_id=([^\s&,]+)", url)
+        if key_id_matches:
+            # For DRM protected content (handles both single and multi-key)
+            key_ids = [k.replace("-", "") for k in key_id_matches]
+            clean_url = re.sub(r"(?:&|\?)key_id=[^\s&,]*", "", clean_url)
 
-        # Extract key
-        key_match = re.search(r"&key=([^&]+)", url)
-        if key_match:
-            key = key_match.group(1)
+    if not keys:
+        key_matches = re.findall(r"(?:&|\?)key=([^\s&]+)", url)
+        if key_matches:
+            keys = [k.replace("-", "") for k in key_matches]
+            clean_url = re.sub(r"(?:&|\?)key=[^\s&]*", "", clean_url)
 
-        # Remove the parameters from the URL
-        clean_url = re.sub(r"&key_id=[^&]*", "", url)
-        clean_url = re.sub(r"&key=[^&]*", "", clean_url)
+    # Final cleanup of the URL
+    clean_url = clean_url.replace("?&", "?").replace("&&", "&").rstrip("?&")
 
-        logger.info(f"Extracted DRM parameters from URL: key_id={key_id}, key={key}")
-        logger.info(f"Cleaned URL: '{url}' -> '{clean_url}'")
+    key_id_str = ",".join(key_ids) if key_ids else None
+    key_str = ",".join(keys) if keys else None
 
-    return clean_url, key_id, key
+    if key_id_str or key_str:
+        logger.info(f"Extracted DRM parameters: key_ids={key_ids}, keys={keys}")
+
+    return clean_url, key_id_str, key_str
 
 
 @proxy_router.head("/hls/manifest.m3u8")

@@ -1457,25 +1457,48 @@ class MP4Decrypter:
                 self.track_encryption_settings[self.current_track_id] = track_settings
 
 
+def parse_key_map(key_id: Optional[str], key: str) -> dict[bytes, bytes]:
+    """
+    Parses key_id and key into a dictionary mapping KIDs to keys.
+    Supports:
+    - ID1,ID2 + K1,K2
+    - ID1:K1,ID2:K2 (in key parameter)
+    - Single hex ID + Key
+    """
+    key_map = {}
+    try:
+        # Format: ID1:K1,ID2:K2
+        if ":" in key:
+            pairs = key.split(",")
+            for pair in pairs:
+                if ":" in pair:
+                    kid_hex, k_hex = pair.split(":", 1)
+                    key_map[bytes.fromhex(kid_hex.strip())] = bytes.fromhex(k_hex.strip())
+        # Format: ID1,ID2 + K1,K2
+        elif key_id and "," in key_id and "," in key:
+            ids = key_id.split(",")
+            keys = key.split(",")
+            for kid_hex, k_hex in zip(ids, keys):
+                key_map[bytes.fromhex(kid_hex.strip())] = bytes.fromhex(k_hex.strip())
+        # Format: Single ID + Key (Standard)
+        elif key_id:
+            key_map[bytes.fromhex(key_id.strip())] = bytes.fromhex(key.strip())
+        else:
+            # Only key provided (might be hex)
+            key_map[b""] = bytes.fromhex(key.strip())
+    except Exception as e:
+        raise ValueError(f"Error parsing DRM keys: {e}. Provided key_id='{key_id}', key='{key}'")
+
+    return key_map
+
+
 def decrypt_segment(
     init_segment: bytes, segment_content: bytes, key_id: str, key: str, include_init: bool = True
 ) -> bytes:
     """
     Decrypts a CENC encrypted MP4 segment.
-
-    Args:
-        init_segment (bytes): Initialization segment data.
-        segment_content (bytes): Encrypted segment content.
-        key_id (str): Key ID in hexadecimal format.
-        key (str): Key in hexadecimal format.
-        include_init (bool): If True, include processed init segment in output.
-            If False, only return decrypted media segment (for use with EXT-X-MAP).
-
-    Returns:
-        bytes: Decrypted segment with processed init (moov/ftyp) + decrypted media (moof/mdat),
-            or just decrypted media if include_init is False.
     """
-    key_map = {bytes.fromhex(key_id): bytes.fromhex(key)}
+    key_map = parse_key_map(key_id, key)
     decrypter = MP4Decrypter(key_map)
     decrypted_content = decrypter.decrypt_segment(init_segment + segment_content, include_init=include_init)
     return decrypted_content
@@ -1484,17 +1507,8 @@ def decrypt_segment(
 def process_drm_init_segment(init_segment: bytes, key_id: str, key: str) -> bytes:
     """
     Processes a DRM-protected init segment for use with EXT-X-MAP.
-    Removes encryption-related boxes but keeps the moov structure.
-
-    Args:
-        init_segment (bytes): Initialization segment data.
-        key_id (str): Key ID in hexadecimal format.
-        key (str): Key in hexadecimal format.
-
-    Returns:
-        bytes: Processed init segment with encryption boxes removed.
     """
-    key_map = {bytes.fromhex(key_id): bytes.fromhex(key)}
+    key_map = parse_key_map(key_id, key)
     decrypter = MP4Decrypter(key_map)
     processed_init = decrypter.process_init_only(init_segment)
     return processed_init

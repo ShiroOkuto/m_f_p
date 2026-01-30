@@ -59,6 +59,7 @@ MediaFlow Proxy is a powerful and flexible solution for proxifying various types
 - **Segment Skipping** - Skip specific time ranges in HLS and DASH streams (intro/outro skipping, ad removal)
 - **Stream Transformers** - Handle host-specific stream obfuscation (e.g., PNG-wrapped MPEG-TS segments)
 
+
 ### DASH/MPD Support Status
 
 #### MPD Segment Addressing Types
@@ -98,6 +99,12 @@ MediaFlow Proxy is a powerful and flexible solution for proxifying various types
 | PrimeTime | ❌ Not Supported | Adobe's DRM system |
 
 > **Note**: MediaFlow Proxy only supports **ClearKey** DRM where the decryption keys are provided directly. Commercial DRM systems (Widevine, PlayReady, FairPlay) require license server communication and hardware-backed security that cannot be bypassed by this proxy.
+
+**Multi-Key Support:**
+MediaFlow Proxy supports multiple decryption keys for DASH/MPD streams (e.g., separate keys for video and audio). You can provide multiple keys via URL parameters using these formats:
+- **Hybrid/IPTV**: `&key_id=ID1&key=K1,key_id=ID2&key=K2`
+- **Standard Repeated**: `&key_id=ID1&key=K1&key_id=ID2&key=K2`
+- **Key-Value Pairs**: `&key=ID1:K1,ID2:K2`
 
 #### IV Size Support
 

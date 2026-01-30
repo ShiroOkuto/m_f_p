@@ -83,8 +83,11 @@ def process_entry(entry_lines: list[str], base_url: str, api_password: Optional[
         from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
         parsed = urlparse(original_url)
         query = parse_qs(parsed.query)
-        kid = query.get("key_id", [None])[0]
-        k = query.get("key", [None])[0]
+        # Extract all key_id and key occurrences and join them for multi-key support
+        kids = query.get("key_id", [])
+        ks = query.get("key", [])
+        kid = ",".join(kids) if kids else None
+        k = ",".join(ks) if ks else None
         
         clean_q = urlencode({k: v for k, v in query.items() if k not in ["key_id", "key"]}, doseq=True)
         clean_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, clean_q, ""))
@@ -97,12 +100,21 @@ def process_entry(entry_lines: list[str], base_url: str, api_password: Optional[
         encoded = urllib.parse.quote(original_url, safe="")
         processed_url = f"{base_url}/proxy/hls/manifest.m3u8?d={encoded}"
 
-    # Aggiungi chiavi KODI
+    # Aggiungi chiavi KODI (Supporta multi-key kid1:k1,kid2:k2)
     lic_key = kodi_props.get("inputstream.adaptive.license_key")
-    if lic_key and ":" in lic_key:
-        kid_k, k_k = lic_key.split(":", 1)
-        if "&key_id=" not in processed_url: processed_url += f"&key_id={kid_k}"
-        if "&key=" not in processed_url: processed_url += f"&key={k_k}"
+    if lic_key:
+        k_ids = []
+        keys = []
+        for pair in lic_key.split(","):
+            if ":" in pair:
+                kid_val, key_val = pair.split(":", 1)
+                k_ids.append(kid_val.strip())
+                keys.append(key_val.strip())
+        
+        if k_ids and "&key_id=" not in processed_url:
+            processed_url += f"&key_id={','.join(k_ids)}"
+        if keys and "&key=" not in processed_url:
+            processed_url += f"&key={','.join(keys)}"
 
     # Aggiungi Headers
     if headers:
