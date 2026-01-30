@@ -65,7 +65,7 @@ async def process_manifest(
 
     # Apply standard response headers (CORS, Stremio logic, etc.)
     response_headers = apply_header_manipulation(
-        {"content-disposition": "inline", "content-type": "application/vnd.apple.mpegurl"},
+        {"content-disposition": "inline", "content-type": "application/x-mpegURL"},
         proxy_headers,
         include_propagate=False,
     )
@@ -116,7 +116,7 @@ async def process_playlist(
 
     # Don't include propagate headers for playlists - they should only apply to segments
     response_headers = apply_header_manipulation({}, proxy_headers, include_propagate=False)
-    return Response(content=hls_content, media_type="application/vnd.apple.mpegurl", headers=response_headers)
+    return Response(content=hls_content, media_type="application/x-mpegURL", headers=response_headers)
 
 
 async def process_segment(
@@ -403,7 +403,8 @@ def _filter_video_profiles_by_resolution(video_profiles: dict, target_resolution
 
 
 def build_hls_playlist(
-    mpd_dict: dict, profiles: list[dict], request: Request, skip_segments: list = None, start_offset: float = None
+    mpd_dict: dict, profiles: list[dict], request: Request, skip_segments: list = None,
+    manifest_type: str = "static", max_duration: float = 10.0
 ) -> str:
     """
     Builds an HLS playlist from the MPD manifest for specific profiles.
@@ -413,24 +414,24 @@ def build_hls_playlist(
         profiles (list[dict]): The profiles to include in the playlist.
         request (Request): The incoming HTTP request.
         skip_segments (list, optional): List of time segments to skip. Each item should have 'start' and 'end' keys.
-        start_offset (float, optional): Start offset in seconds for live streams. Defaults to settings.livestream_start_offset for live.
+        manifest_type (str): Type of manifest ("static" or "dynamic").
+        max_duration (float): Maximum segment duration.
 
     Returns:
         str: The HLS playlist as a string.
     """
     hls = ["#EXTM3U", "#EXT-X-VERSION:3"]
 
+    if manifest_type == "dynamic":
+        # Live stream: start 30s before the end for buffer.
+        # PRECISE=NO is better for widespread player compatibility.
+        hls.append("#EXT-X-START:TIME-OFFSET=-30.0,PRECISE=NO")
+
+    hls.append(f"#EXT-X-TARGETDURATION:{int(max_duration) + 1}")
+
     added_segments = 0
     skipped_segments = 0
     is_live = mpd_dict.get("isLive", False)
-
-    # Inject EXT-X-START for live streams (enables prebuffering by starting behind live edge)
-    # User-provided start_offset always takes precedence; otherwise use default for live streams only
-    effective_start_offset = (
-        start_offset if start_offset is not None else (settings.livestream_start_offset if is_live else None)
-    )
-    if effective_start_offset is not None:
-        hls.append(f"#EXT-X-START:TIME-OFFSET={effective_start_offset:.1f},PRECISE=YES")
 
     # Initialize skip filter if skip_segments provided
     skip_filter = SkipSegmentFilter(skip_segments) if skip_segments else None
@@ -481,12 +482,6 @@ def build_hls_playlist(
                     else:
                         sequence = 1
 
-            hls.extend(
-                [
-                    f"#EXT-X-TARGETDURATION:{target_duration}",
-                    f"#EXT-X-MEDIA-SEQUENCE:{sequence}",
-                ]
-            )
             # For live streams, don't set PLAYLIST-TYPE to allow sliding window
             if not is_live:
                 hls.append("#EXT-X-PLAYLIST-TYPE:VOD")

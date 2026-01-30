@@ -654,7 +654,10 @@ def apply_header_manipulation(
     # --- EXOPLAYER & STREMIO COMPATIBILITY FIXES ---
     # Mandatory CORS headers for ExoPlayer
     result["access-control-allow-origin"] = "*"
+    result["access-control-allow-methods"] = "GET, HEAD, OPTIONS"
+    result["access-control-allow-headers"] = "*"
     result["access-control-expose-headers"] = "Content-Length, Content-Type, Content-Range, Accept-Ranges, Date"
+    result["connection"] = "keep-alive"
     
     # Ensure accept-ranges is signaled if not explicitly removed
     if "accept-ranges" not in result and "accept-ranges" not in remove_set:
