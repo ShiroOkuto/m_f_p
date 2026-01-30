@@ -152,14 +152,16 @@ async def process_segment(
             # Concatenate init and segment content
             decrypted_content = init_content + segment_content
 
-    # --- LEGACY REMUXING DISABLED ---
-    # FFmpeg segment remuxing was causing sync issues with separate A/V tracks
-    # Returning decrypted content directly for now
-    # TODO: Investigate proper approach for MPD streams with separate adaptation sets
-    # if "video" in mimetype or "audio" in mimetype:
-    #     remuxed_content = await remux_to_ts(decrypted_content)
-    #     if remuxed_content:
-    #          return Response(content=remuxed_content, media_type="video/MP2T", headers=apply_header_manipulation({}, proxy_headers))
+    # --- LEGACY REMUXING (FFmpeg Segment Wrapper) ---
+    # Converts fMP4 to MPEG-TS to fix timestamp issues, matching EasyProxy Legacy Mode
+    # NOTE: use_map=False ensures init+segment are already combined (self-contained segments)
+    if "video" in mimetype or "audio" in mimetype:
+        remuxed_content = await remux_to_ts(decrypted_content)
+        if remuxed_content:
+             return Response(content=remuxed_content, media_type="video/MP2T", headers=apply_header_manipulation({}, proxy_headers))
+        else:
+             # Fallback: serve fMP4 if remux fails
+             logger.warning("FFmpeg remux failed, serving raw fMP4")
 
     response_headers = apply_header_manipulation({}, proxy_headers)
     return Response(content=decrypted_content, media_type=mimetype, headers=response_headers)
@@ -167,20 +169,18 @@ async def process_segment(
 async def remux_to_ts(content: bytes) -> Optional[bytes]:
     """
     Remuxes content to MPEG-TS using FFmpeg via pipe.
-    Matches EasyProxy's _remux_to_ts implementation.
+    Exact copy of EasyProxy's _remux_to_ts implementation.
     """
     try:
         logger.info(f"Starting FFmpeg segment remux, input size: {len(content)} bytes")
         cmd = [
             'ffmpeg',
             '-y',
-            '-hide_banner',
-            '-loglevel', 'error',
-            '-fflags', '+genpts+igndts',    # Generate PTS and ignore DTS issues
             '-i', 'pipe:0',
             '-c', 'copy',
-            '-muxdelay', '0',               # No mux delay
-            '-muxpreload', '0',             # No mux preload
+            '-copyts',                      # Preserve timestamps to prevent freezing/gap issues
+            '-bsf:v', 'h264_mp4toannexb',   # Ensure video is Annex B (MPEG-TS requirement)
+            '-bsf:a', 'aac_adtstoasc',      # Ensure audio is ADTS (MPEG-TS requirement)
             '-f', 'mpegts',
             'pipe:1'
         ]
