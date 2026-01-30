@@ -238,7 +238,24 @@ class AcestreamSessionManager:
 
         # Session registry directory
         self._registry_dir = Path(tempfile.gettempdir()) / "mediaflow_acestream" / "sessions"
-        self._registry_dir.mkdir(parents=True, exist_ok=True)
+        self.disabled = False
+        try:
+            self._registry_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+             if e.errno == 28: # No space
+                logger.warning(f"[AcestreamSessionManager] Disk full for registry {self._registry_dir}. Attempting cleanup...")
+                try:
+                    import shutil
+                    if self._registry_dir.exists():
+                        shutil.rmtree(self._registry_dir, ignore_errors=True)
+                    self._registry_dir.mkdir(parents=True, exist_ok=True)
+                except Exception as cleanup_e:
+                    logger.error(f"[AcestreamSessionManager] Cleanup failed: {cleanup_e}. Disabling registry persistence.")
+                    self.disabled = True
+             else:
+                 logger.error(f"[AcestreamSessionManager] Failed to init registry dir: {e}. Disabling persistence.")
+                 self.disabled = True
+
 
         # Keepalive task
         self._keepalive_task: Optional[asyncio.Task] = None
@@ -262,6 +279,8 @@ class AcestreamSessionManager:
 
     async def _read_registry(self, infohash: str) -> Optional[Dict[str, Any]]:
         """Read session data from registry file."""
+        if self.disabled:
+            return None
         registry_path = self._get_registry_path(infohash)
         try:
             if registry_path.exists():
@@ -274,6 +293,8 @@ class AcestreamSessionManager:
 
     async def _write_registry(self, session: AcestreamSession) -> None:
         """Write session data to registry file."""
+        if self.disabled:
+             return
         registry_path = self._get_registry_path(session.infohash)
         try:
             temp_path = registry_path.with_suffix(".tmp")
@@ -285,6 +306,8 @@ class AcestreamSessionManager:
 
     async def _delete_registry(self, infohash: str) -> None:
         """Delete session from registry file."""
+        if self.disabled:
+            return
         registry_path = self._get_registry_path(infohash)
         try:
             if registry_path.exists():
