@@ -2,6 +2,8 @@ import asyncio
 import logging
 import math
 import time
+import subprocess
+from typing import Optional
 
 from fastapi import Request, Response, HTTPException
 
@@ -150,8 +152,56 @@ async def process_segment(
             # Concatenate init and segment content
             decrypted_content = init_content + segment_content
 
+    # --- LEGACY REMUXING (FFmpeg Segment Wrapper) ---
+    # Converts fMP4 to MPEG-TS to fix timestamp issues, matching EasyProxy Legacy Mode
+    if "video" in mimetype:
+        remuxed_content = await remux_to_ts(decrypted_content)
+        if remuxed_content:
+             return Response(content=remuxed_content, media_type="video/MP2T", headers=apply_header_manipulation({}, proxy_headers))
+
     response_headers = apply_header_manipulation({}, proxy_headers)
     return Response(content=decrypted_content, media_type=mimetype, headers=response_headers)
+
+async def remux_to_ts(content: bytes) -> Optional[bytes]:
+    """
+    Remuxes content to MPEG-TS using FFmpeg via pipe.
+    Matches EasyProxy's _remux_to_ts implementation.
+    """
+    try:
+        cmd = [
+            'ffmpeg',
+            '-y',
+            '-hide_banner',
+            '-loglevel', 'error',
+            '-i', 'pipe:0',
+            '-c', 'copy',
+            '-copyts',                      # Preserve timestamps to prevent freezing/gap issues
+            '-bsf:v', 'h264_mp4toannexb',   # Ensure video is Annex B (MPEG-TS requirement)
+            '-bsf:a', 'aac_adtstoasc',      # Ensure audio is ADTS (MPEG-TS requirement)
+            '-f', 'mpegts',
+            'pipe:1'
+        ]
+        
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        
+        stdout, stderr = await proc.communicate(input=content)
+        
+        if len(stdout) > 0:
+            return stdout
+        
+        if proc.returncode != 0:
+            logger.error(f"FFmpeg segment remux failed: {stderr.decode()}")
+            return None
+            
+        return stdout
+    except Exception as e:
+        logger.error(f"Segment remux error: {e}")
+        return None
 
 
 async def process_init_segment(

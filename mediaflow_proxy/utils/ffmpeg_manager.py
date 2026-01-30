@@ -139,20 +139,28 @@ class FFmpegManager:
         # Explicit mapping to ensure video is selected
         cmd.extend(["-map", "0:v?", "-map", "0:a?"])
 
-        # Stream copy (faster, less CPU, but less compatible)
+        # --- TRANSCODING (EasyProxy Legacy Mode) ---
+        # Guarantees rigid GOP and compatible profile
         cmd.extend([
-            "-c", "copy",
-            "-ignore_unknown",
-            "-vsync", "passthrough", # Do not drop/duplicate frames
+            "-threads", "0",
+            "-vf", "scale=-2:720",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-crf", "28",
+            "-g", "30", # Force keyframe every 30 frames (1s approx)
+            "-profile:v", "baseline",
+            "-c:a", "aac",
+            "-b:a", "96k",
+            "-ac", "2",
+            "-ar", "44100",
         ])
 
         # Bitstream filter determines compatibility for HLS/MPEG-TS
         # We apply h264_mp4toannexb by default for H.264 streams
-        # But we need to be careful if the source is HEVC or others
         cmd.extend([
             "-bsf:v", "h264_mp4toannexb",
-            "-bsf:a", "aac_adtstoasc", # Fix audio bitstream for TS
-            "-avoid_negative_ts", "make_zero", # Matches EasyProxy
+            "-avoid_negative_ts", "make_zero",
             "-max_muxing_queue_size", "4096",
             "-f", "hls",
             "-hls_time", "4", # Standard 4s segments
