@@ -180,7 +180,7 @@ async def remux_to_ts(content: bytes) -> Optional[bytes]:
             '-c', 'copy',
             '-copyts',                      # Preserve timestamps to prevent freezing/gap issues
             '-bsf:v', 'h264_mp4toannexb',   # Ensure video is Annex B (MPEG-TS requirement)
-            '-bsf:a', 'aac_adtstoasc',      # Ensure audio is ADTS (MPEG-TS requirement)
+            # Audio AAC to ADTS is handled automatically by FFmpeg for TS output
             '-f', 'mpegts',
             'pipe:1'
         ]
