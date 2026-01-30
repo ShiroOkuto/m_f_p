@@ -9,7 +9,7 @@ import zlib
 import random
 import time
 from urllib.parse import urlparse, urljoin
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 import aiohttp
 from aiohttp import ClientSession, ClientTimeout, TCPConnector, FormData
@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 _GLOBAL_SESSION: Optional[ClientSession] = None
 _GLOBAL_PROXY_URL: Optional[str] = None
 _SESSION_LOCK = asyncio.Lock()
-_IFRAME_HOSTS = []
-_STREAM_DATA_CACHE = {}
+_IFRAME_HOSTS: List[str] = []
+_STREAM_DATA_CACHE: Dict[str, Any] = {}
 _DLHD_CONFIG = {
     'auth_url': 'https://security.kiko2.ru/auth2.php',
     'stream_cdn_template': 'https://top1.kiko2.ru/top1/cdn/{CHANNEL}/mono.css',
@@ -66,6 +66,7 @@ class DLHDExtractor(BaseExtractor):
                 
                 # Get default routing for a DLHD-like URL to determine proxy
                 routing_config = get_routing_config()
+                # Use a more generic pattern for DaddyLive
                 route_match = routing_config.match_url("https://dlhd.dad")
                 
                 connector, _GLOBAL_PROXY_URL = _create_connector(route_match.proxy_url, verify_ssl=False)
@@ -155,7 +156,7 @@ class DLHDExtractor(BaseExtractor):
                         status=response.status,
                         headers=dict(response.headers),
                         text=content,
-                        content=await response.read(), # This might be redundant but keeping for signature
+                        content=await response.read(),
                         url=str(response.url)
                     )
             except Exception as e:
@@ -184,6 +185,7 @@ class DLHDExtractor(BaseExtractor):
         encoded_url = "aHR0cHM6Ly9pZnJhbWUuZGxoZC5kcGRucy5vcmcv"
         url = base64.b64decode(encoded_url).decode('utf-8')
         
+        logger.info(f"🔄 Updating iframe host list...")
         try:
             session, proxy_url = await self._get_session()
             async with session.get(url, ssl=False, timeout=ClientTimeout(total=10), proxy=proxy_url) as response:
@@ -208,6 +210,7 @@ class DLHDExtractor(BaseExtractor):
                     
                     if new_hosts:
                         _IFRAME_HOSTS[:] = new_hosts
+                        logger.info(f"✅ Iframe host list updated: {_IFRAME_HOSTS}")
                         return True
         except Exception as e:
             logger.error(f"Error updating iframe host: {e}")
@@ -224,7 +227,8 @@ class DLHDExtractor(BaseExtractor):
             return None
 
         secret_var_name = hmac_match.group(1)
-        let_pattern = rf'let\s+{re.escape(secret_var_name)}\s*='
+        # Try both 'let' and 'const' patterns
+        let_pattern = rf'(?:let|const)\s+{re.escape(secret_var_name)}\s*='
         let_match = re.search(let_pattern, iframe_html)
         if not let_match:
             return None
@@ -276,15 +280,18 @@ class DLHDExtractor(BaseExtractor):
         return None
 
     async def _extract_new_auth_flow(self, iframe_url: str, iframe_content: str) -> Dict[str, Any]:
+        logger.info("Tentativo rilevamento nuovo flusso auth obfuscated...")
         obfuscated_data = self._extract_obfuscated_session_data(iframe_content)
         params = {}
         secret_key = None
 
         if obfuscated_data:
+            logger.info("✅ Rilevato pattern obfuscated (var_xxx)")
             params['auth_token'] = obfuscated_data.get('session_token')
             params['channel_key'] = obfuscated_data.get('channel_key')
             secret_key = obfuscated_data.get('secret_key')
         else:
+            logger.info("Pattern obfuscated non trovato, provo estrazione euristica...")
             jwt_match = re.search(r'["\'](eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+)["\']', iframe_content)
             if jwt_match:
                 params['auth_token'] = jwt_match.group(1)
@@ -317,6 +324,7 @@ class DLHDExtractor(BaseExtractor):
             if m_url: channel_key = f"premium{m_url.group(1)}"
             else: raise ExtractorError("Channel Key missing.")
 
+        logger.info("🚀 Skipping auth2.php POST (new flow detected). Proceeding directly to server lookup.")
         server_key = await self._fetch_server_key(channel_key, iframe_url)
         stream_url = self._build_stream_url(server_key, channel_key)
         stream_headers = self._build_stream_headers(iframe_url, channel_key, params['auth_token'], secret_key)
@@ -360,6 +368,12 @@ class DLHDExtractor(BaseExtractor):
                 stream_url = f"https://{server}/{channel_match.group(1)}/mono.m3u8"
         
         if not stream_url:
+            url_pattern = r'https?://[^\s"\'<>]+\.m3u8[^\s"\'<>]*'
+            matches = re.findall(url_pattern, iframe_content)
+            if matches:
+                 stream_url = matches[0]
+
+        if not stream_url:
             raise ExtractorError("Could not find stream URL in lovecdn.ru iframe")
         
         return {
@@ -377,10 +391,11 @@ class DLHDExtractor(BaseExtractor):
         if not channel_id:
             raise ExtractorError(f"Unable to extract channel ID from {url}")
 
-        # Check cache
+        # Check in-memory cache
         if not force_refresh and channel_id in _STREAM_DATA_CACHE:
             cached = _STREAM_DATA_CACHE[channel_id]
             if not cached.get("expires_at") or time.time() < (cached["expires_at"] - 30):
+                logger.info(f"Using in-memory cache for DLHD channel {channel_id}")
                 return cached
 
         async def do_extraction(cid, hosts):
@@ -388,15 +403,78 @@ class DLHDExtractor(BaseExtractor):
             for host in hosts:
                 try:
                     iframe_url = f'https://{host}/premiumtv/daddyhd.php?id={cid}'
+                    logger.info(f"🔍 Attempting extraction from: {iframe_url}")
                     resp = await self._make_robust_request(iframe_url, retries=2)
                     content = resp.text
                     
                     if 'lovecdn.ru' in content:
+                        logger.info("Detected lovecdn.ru iframe")
                         return await self._extract_lovecdn_stream(iframe_url, content)
                     
-                    # Try current new auth flow
-                    return await self._extract_new_auth_flow(iframe_url, content)
+                    # Pattern matching for auth parameters
+                    params = {}
+                    patterns = {
+                        'channel_key': r'(?:const|var|let)\s+(?:CHANNEL_KEY|channelKey)\s*=\s*["\']([^"\']+)["\']',
+                        'auth_token': r'(?:const|var|let)\s+AUTH_TOKEN\s*=\s*["\']([^"\']+)["\']',
+                        'auth_country': r'(?:const|var|let)\s+AUTH_COUNTRY\s*=\s*["\']([^"\']+)["\']',
+                        'auth_ts': r'(?:const|var|let)\s+AUTH_TS\s*=\s*["\']([^"\']+)["\']',
+                        'auth_expiry': r'(?:const|var|let)\s+AUTH_EXPIRY\s*=\s*["\']([^"\']+)["\']',
+                    }
+                    for key, pattern in patterns.items():
+                        match = re.search(pattern, content)
+                        params[key] = match.group(1) if match else None
+                    
+                    missing_params = [k for k, v in params.items() if not v]
+                    if missing_params:
+                        logger.info(f"Missing params {missing_params}, trying new auth flow...")
+                        return await self._extract_new_auth_flow(iframe_url, content)
+                    
+                    # Classic auth flow
+                    logger.info(f"Using classic auth flow for {channel_id}")
+                    auth_url = _DLHD_CONFIG['auth_url']
+                    iframe_origin = f"https://{host}"
+                    
+                    form_data = FormData()
+                    form_data.add_field('channelKey', params['channel_key'])
+                    form_data.add_field('country', params['auth_country'])
+                    form_data.add_field('timestamp', params['auth_ts'])
+                    form_data.add_field('expiry', params['auth_expiry'])
+                    form_data.add_field('token', params['auth_token'])
+                    
+                    auth_headers = {
+                        'User-Agent': self.USER_AGENT,
+                        'Origin': iframe_origin,
+                        'Referer': iframe_url,
+                    }
+                    
+                    session, proxy_url = await self._get_session()
+                    async with session.post(auth_url, data=form_data, headers=auth_headers, ssl=False, proxy=proxy_url) as auth_resp:
+                        auth_text = await auth_resp.text()
+                        if auth_resp.status != 200 or 'Blocked' in auth_text:
+                             logger.warning(f"Classic auth failed, trying new flow as fallback...")
+                             return await self._extract_new_auth_flow(iframe_url, content)
+                        
+                        auth_data = json.loads(auth_text)
+                        if not (auth_data.get('success') or auth_data.get('valid')):
+                             return await self._extract_new_auth_flow(iframe_url, content)
+
+                    server_key = await self._fetch_server_key(params['channel_key'], iframe_url)
+                    stream_url = self._build_stream_url(server_key, params['channel_key'])
+                    stream_headers = self._build_stream_headers(iframe_url, params['channel_key'], params['auth_token'])
+                    
+                    cookies = session.cookie_jar.filter_cookies(stream_url)
+                    cookie_str = "; ".join([f"{k}={v.value}" for k, v in cookies.items()])
+                    if cookie_str:
+                        stream_headers['Cookie'] = cookie_str
+                        
+                    return {
+                        "destination_url": stream_url,
+                        "request_headers": stream_headers,
+                        "mediaflow_endpoint": self.mediaflow_endpoint,
+                        "expires_at": float(params.get('auth_expiry', 0))
+                    }
                 except Exception as e:
+                    logger.warning(f"Host {host} failed: {e}")
                     last_err = e
                     continue
             raise ExtractorError(f"All hosts failed. Last error: {last_err}")
@@ -408,6 +486,7 @@ class DLHDExtractor(BaseExtractor):
         try:
             result = await do_extraction(channel_id, _IFRAME_HOSTS)
         except ExtractorError:
+            # Force refresh host list on total failure
             if await self._fetch_iframe_hosts():
                 result = await do_extraction(channel_id, _IFRAME_HOSTS)
             else:

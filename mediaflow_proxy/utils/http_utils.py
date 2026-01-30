@@ -69,8 +69,19 @@ async def fetch_with_retry(
     Raises:
         DownloadError: If the request fails after retries.
     """
+    # Handle DLHD key special headers calculation
+    request_headers = headers.copy()
+    secret_key = request_headers.pop('x-secret-key', None) or request_headers.pop('X-Secret-Key', None)
+    if secret_key and ('/key/' in url or '/key' in url):
+        from .dlhd_utils import compute_dlhd_key_headers
+        user_agent = request_headers.get('x-user-agent') or request_headers.get('user-agent')
+        nonce_headers = compute_dlhd_key_headers(url, secret_key, user_agent)
+        if nonce_headers:
+            request_headers.update(nonce_headers)
+            logger.info(f"🔐 Added DLHD nonce headers for key: {url}")
+
     try:
-        response = await session.request(method, url, headers=headers, proxy=proxy, **kwargs)
+        response = await session.request(method, url, headers=request_headers, proxy=proxy, **kwargs)
         response.raise_for_status()
         return response
     except asyncio.TimeoutError:
@@ -123,8 +134,19 @@ class Streamer:
             url: The URL to stream from.
             headers: The headers to include in the request.
         """
+        # Handle DLHD key special headers calculation
+        request_headers = headers.copy()
+        secret_key = request_headers.pop('x-secret-key', None) or request_headers.pop('X-Secret-Key', None)
+        if secret_key and ('/key/' in url or '/key' in url):
+            from .dlhd_utils import compute_dlhd_key_headers
+            user_agent = request_headers.get('x-user-agent') or request_headers.get('user-agent')
+            nonce_headers = compute_dlhd_key_headers(url, secret_key, user_agent)
+            if nonce_headers:
+                request_headers.update(nonce_headers)
+                logger.info(f"🔐 Added DLHD nonce headers for key: {url}")
+
         try:
-            self.response = await self.session.get(url, headers=headers, proxy=self.proxy_url)
+            self.response = await self.session.get(url, headers=request_headers, proxy=self.proxy_url)
             self.response.raise_for_status()
         except asyncio.TimeoutError:
             logger.warning("Timeout while creating streaming response")
