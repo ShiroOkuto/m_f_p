@@ -242,7 +242,7 @@ async def acestream_hls_manifest(
 
 # Map file extensions to MIME types for segments
 SEGMENT_MIME_TYPES = {
-    "ts": "video/MP2T",
+    "ts": "video/mp2t",
     "m4s": "video/mp4",
     "mp4": "video/mp4",
     "m4a": "audio/mp4",
@@ -305,7 +305,6 @@ async def acestream_segment_proxy(
                 "content-type": mime_type,
                 "cache-control": "public, max-age=3600",
                 "access-control-allow-origin": "*",
-                "content-disposition": f'attachment; filename="segment.{ext}"',
             }
             response_headers = apply_header_manipulation(base_headers, proxy_headers)
             return Response(content=segment_data, media_type=mime_type, headers=response_headers)
@@ -321,7 +320,6 @@ async def acestream_segment_proxy(
             "content-type": mime_type,
             "cache-control": "public, max-age=3600",
             "access-control-allow-origin": "*",
-            "content-disposition": f'attachment; filename="segment.{ext}"',
         }
         response_headers = apply_header_manipulation(base_headers, proxy_headers)
 
@@ -395,7 +393,7 @@ async def acestream_ts_stream(
             await streamer.create_streaming_response(ts_url, proxy_headers.request)
 
             base_headers = {
-                "content-type": "video/MP2T",
+                "content-type": "video/mp2t",
                 "transfer-encoding": "chunked",
                 "cache-control": "no-cache, no-store, must-revalidate",
                 "access-control-allow-origin": "*",

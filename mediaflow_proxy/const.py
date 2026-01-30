@@ -14,7 +14,4 @@ SUPPORTED_RESPONSE_HEADERS = [
 SUPPORTED_REQUEST_HEADERS = [
     "range",
     "if-range",
-    "user-agent",
-    "referer",
-    "origin",
 ]

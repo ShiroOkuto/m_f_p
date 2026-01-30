@@ -63,13 +63,7 @@ async def process_manifest(
             # Start pre-buffering in background
             asyncio.create_task(dash_prebuffer.prebuffer_dash_manifest(mpd_url, headers))
 
-    # Apply standard response headers (CORS, Stremio logic, etc.)
-    response_headers = apply_header_manipulation(
-        {"content-disposition": "inline", "content-type": "application/x-mpegURL"},
-        proxy_headers,
-        include_propagate=False,
-    )
-    return Response(content=hls_content, headers=response_headers)
+    return Response(content=hls_content, media_type="application/vnd.apple.mpegurl", headers=proxy_headers.response)
 
 
 async def process_playlist(
@@ -101,14 +95,7 @@ async def process_playlist(
     if not matching_profiles:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    hls_content = build_hls_playlist(
-        mpd_dict,
-        matching_profiles,
-        request,
-        skip_segments,
-        manifest_type="dynamic" if mpd_dict.get("isLive") else "static",
-        max_duration=mpd_dict.get("maxSegmentDuration", 10.0),
-    )
+    hls_content = build_hls_playlist(mpd_dict, matching_profiles, request, skip_segments, start_offset)
 
     # Trigger prebuffering of upcoming segments for live streams
     if settings.enable_dash_prebuffer and mpd_dict.get("isLive", False):
@@ -123,7 +110,7 @@ async def process_playlist(
 
     # Don't include propagate headers for playlists - they should only apply to segments
     response_headers = apply_header_manipulation({}, proxy_headers, include_propagate=False)
-    return Response(content=hls_content, media_type="application/x-mpegURL", headers=response_headers)
+    return Response(content=hls_content, media_type="application/vnd.apple.mpegurl", headers=response_headers)
 
 
 async def process_segment(
@@ -171,20 +158,12 @@ async def process_segment(
     if settings.remux_to_ts and ("video" in mimetype or "audio" in mimetype):
         remuxed_content = await remux_to_ts(decrypted_content)
         if remuxed_content:
-             base_headers = {
-                 "access-control-allow-origin": "*",
-                 "access-control-expose-headers": "Content-Length, Content-Type, Date",
-                 "accept-ranges": "bytes",
-             }
-             return Response(content=remuxed_content, media_type="video/MP2T", headers=apply_header_manipulation(base_headers, proxy_headers))
+             return Response(content=remuxed_content, media_type="video/MP2T", headers=apply_header_manipulation({}, proxy_headers))
         else:
              # Fallback: serve fMP4 if remux fails
              logger.warning("FFmpeg remux failed, serving raw fMP4")
 
-    extension = "ts" if mimetype == "video/MP2T" else "mp4"
-    response_headers = apply_header_manipulation(
-        {"content-disposition": f'attachment; filename="segment.{extension}"'}, proxy_headers
-    )
+    response_headers = apply_header_manipulation({}, proxy_headers)
     return Response(content=decrypted_content, media_type=mimetype, headers=response_headers)
 
 async def remux_to_ts(content: bytes) -> Optional[bytes]:
@@ -309,7 +288,7 @@ def build_hls(
     Returns:
         str: The HLS manifest as a string.
     """
-    hls = ["#EXTM3U", "#EXT-X-VERSION:3"]
+    hls = ["#EXTM3U", "#EXT-X-VERSION:6"]
     query_params = dict(request.query_params)
 
     # Preserve skip parameter in query params so it propagates to playlists
@@ -410,8 +389,7 @@ def _filter_video_profiles_by_resolution(video_profiles: dict, target_resolution
 
 
 def build_hls_playlist(
-    mpd_dict: dict, profiles: list[dict], request: Request, skip_segments: list = None,
-    manifest_type: str = "static", max_duration: float = 10.0
+    mpd_dict: dict, profiles: list[dict], request: Request, skip_segments: list = None, start_offset: float = None
 ) -> str:
     """
     Builds an HLS playlist from the MPD manifest for specific profiles.
@@ -421,24 +399,24 @@ def build_hls_playlist(
         profiles (list[dict]): The profiles to include in the playlist.
         request (Request): The incoming HTTP request.
         skip_segments (list, optional): List of time segments to skip. Each item should have 'start' and 'end' keys.
-        manifest_type (str): Type of manifest ("static" or "dynamic").
-        max_duration (float): Maximum segment duration.
+        start_offset (float, optional): Start offset in seconds for live streams. Defaults to settings.livestream_start_offset for live.
 
     Returns:
         str: The HLS playlist as a string.
     """
-    hls = ["#EXTM3U", "#EXT-X-VERSION:3"]
-
-    if manifest_type == "dynamic":
-        # Live stream: start 30s before the end for buffer.
-        # PRECISE=NO is better for widespread player compatibility.
-        hls.append("#EXT-X-START:TIME-OFFSET=-30.0,PRECISE=NO")
-
-    hls.append(f"#EXT-X-TARGETDURATION:{int(max_duration) + 1}")
+    hls = ["#EXTM3U", "#EXT-X-VERSION:6"]
 
     added_segments = 0
     skipped_segments = 0
     is_live = mpd_dict.get("isLive", False)
+
+    # Inject EXT-X-START for live streams (enables prebuffering by starting behind live edge)
+    # User-provided start_offset always takes precedence; otherwise use default for live streams only
+    effective_start_offset = (
+        start_offset if start_offset is not None else (settings.livestream_start_offset if is_live else None)
+    )
+    if effective_start_offset is not None:
+        hls.append(f"#EXT-X-START:TIME-OFFSET={effective_start_offset:.1f},PRECISE=YES")
 
     # Initialize skip filter if skip_segments provided
     skip_filter = SkipSegmentFilter(skip_segments) if skip_segments else None
@@ -489,6 +467,12 @@ def build_hls_playlist(
                     else:
                         sequence = 1
 
+            hls.extend(
+                [
+                    f"#EXT-X-TARGETDURATION:{target_duration}",
+                    f"#EXT-X-MEDIA-SEQUENCE:{sequence}",
+                ]
+            )
             # For live streams, don't set PLAYLIST-TYPE to allow sliding window
             if not is_live:
                 hls.append("#EXT-X-PLAYLIST-TYPE:VOD")

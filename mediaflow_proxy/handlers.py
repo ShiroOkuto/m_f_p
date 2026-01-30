@@ -235,14 +235,8 @@ async def handle_stream_request(
         logger.debug(f"Upstream response status: {streamer.response.status}")
         logger.debug(f"Upstream response headers: {dict(streamer.response.headers)}")
 
-        base_headers = dict(proxy_headers.response)
-        if streamer.total_size > 0:
-            base_headers["content-length"] = str(streamer.total_size)
-            if streamer.response.headers.get("Content-Range"):
-                base_headers["content-range"] = streamer.response.headers.get("Content-Range")
-
         response_headers = prepare_response_headers(
-            streamer.response.headers, base_headers, proxy_headers.remove, proxy_headers.propagate
+            streamer.response.headers, proxy_headers.response, proxy_headers.remove, proxy_headers.propagate
         )
         logger.debug(f"Prepared response headers: {response_headers}")
 
@@ -261,16 +255,10 @@ async def handle_stream_request(
             return Response(headers=response_headers, status_code=status_code)
         else:
             # For GET requests, return the streaming response
-            media_type = (
-                "application/x-mpegURL"
-                if video_url.endswith((".m3u8", ".m3u"))
-                else streamer.response.content_type
-            )
             return EnhancedStreamingResponse(
                 streamer.stream_content(transformer),
                 headers=response_headers,
                 status_code=status_code,
-                media_type=media_type,
                 background=BackgroundTask(streamer.close),
             )
     except Exception as e:
@@ -309,11 +297,7 @@ def prepare_response_headers(
     if propagate_headers:
         response_headers.update(propagate_headers)
     response_headers.update(proxy_response_headers)
-
-    # Use apply_header_manipulation to add mandatory CORS and Stremio-specific headers
-    # We pass an empty dict to ProxyRequestHeaders for request as we only care about the UA from the session if available,
-    # but since we already have the manipulated headers, we just want to apply the CORS/Cache logic.
-    return apply_header_manipulation(response_headers, ProxyRequestHeaders({}, {}, [], propagate_headers or {}))
+    return response_headers
 
 
 async def proxy_stream(
@@ -385,8 +369,6 @@ async def fetch_and_process_m3u8(
             "content-disposition": "inline",
             "accept-ranges": "none",
             "content-type": "application/vnd.apple.mpegurl",
-            "access-control-allow-origin": "*",
-            "access-control-expose-headers": "Content-Length, Content-Type, Date",
         }
         # Don't include propagate headers for manifests - they should only apply to segments
         response_headers = apply_header_manipulation(base_headers, proxy_headers, include_propagate=False)
