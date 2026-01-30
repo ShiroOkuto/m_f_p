@@ -135,26 +135,19 @@ class FFmpegManager:
 
         cmd.extend(["-i", url])
 
-        if settings.ffmpeg_transcode:
-            # Full transcode for maximum compatibility (EasyProxy logic)
-            cmd.extend([
-                "-threads", "0",
-                "-vf", "scale=-2:720",  # Scale to 720p max height, keep aspect ratio
-                "-c:v", settings.ffmpeg_video_encoder,
-                "-preset", "ultrafast",
-                "-tune", "zerolatency",
-                "-crf", "28",
-                "-g", "30",
-                "-profile:v", "baseline",
-                "-c:a", settings.ffmpeg_audio_encoder,
-                "-b:a", "96k",
-                "-ac", "2",
-                "-ar", "44100",
-            ])
-        else:
-            # Stream copy (faster, less CPU, but less compatible)
-            cmd.extend(["-c", "copy"])
+        # Explicit mapping to ensure video is selected
+        cmd.extend(["-map", "0:v?", "-map", "0:a?"])
 
+        # Stream copy (faster, less CPU, but less compatible)
+        cmd.extend([
+            "-c", "copy",
+            # Ignore unknown stream types that might fail mapping
+            "-ignore_unknown",
+        ])
+
+        # Bitstream filter determines compatibility for HLS/MPEG-TS
+        # We apply h264_mp4toannexb by default for H.264 streams
+        # But we need to be careful if the source is HEVC or others
         cmd.extend([
             "-bsf:v", "h264_mp4toannexb",
             "-avoid_negative_ts", "make_zero",
