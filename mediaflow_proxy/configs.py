@@ -68,7 +68,6 @@ class Settings(BaseSettings):
     mpd_live_playlist_depth: int = 8  # Number of recent segments to expose per live playlist variant.
 
     # FFmpeg Transcoding settings
-    ffmpeg_remux: bool = False  # Enable FFmpeg remuxing for MPD streams.
     ffmpeg_temp_dir: str = "temp_ffmpeg"  # Directory to store temporary HLS segments.
     ffmpeg_idle_timeout: int = 120  # Seconds of inactivity before terminating an idle FFmpeg stream.
 

@@ -539,11 +539,17 @@ def build_hls_playlist(
                 segment_query_params["init_range"] = segment["initRange"]
 
             query_params.update(segment_query_params)
+                )
+            )
+            # Add filename for legacy compatibility (players like Samsung Tizen require .ts extension)
+            seg_filename = "segment.ts" if not use_map else "segment.m4s"
+
             hls.append(
                 encode_mediaflow_proxy_url(
                     proxy_url,
                     query_params=query_params,
                     encryption_handler=encryption_handler if has_encrypted else None,
+                    filename=seg_filename
                 )
             )
             added_segments += 1
