@@ -27,6 +27,9 @@ COPY pyproject.toml uv.lock* /build/
 # Install dependencies into a virtual environment
 RUN uv sync --frozen --no-install-project --no-dev
 
+# Install zstandard explicitly (required for DLHD extractor)
+RUN /build/.venv/bin/pip install --no-cache-dir zstandard
+
 # Stage 2: Runtime stage (minimal image)
 FROM python:3.14-slim
 
