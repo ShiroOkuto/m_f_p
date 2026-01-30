@@ -343,9 +343,31 @@ class CrossProcessLock:
         """Create lock directory if it doesn't exist."""
         try:
             self.lock_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(f"Failed to create lock directory {self.lock_dir}: {e}")
-            raise
+            self.disabled = False
+        except OSError as e:
+            if e.errno == 28: # No space left on device
+                logger.warning(f"Disk full while creating lock dir {self.lock_dir}. Attempting cleanup...")
+                try:
+                    import shutil
+                    # Try to clean up the directory if it exists but is full
+                    if self.lock_dir.exists():
+                        for item in self.lock_dir.glob("*.lock"):
+                           try:
+                               item.unlink()
+                           except Exception: pass
+                    else:
+                        # Try to create it again after some systemic cleanup? Nothing we can do easily.
+                        pass
+                    
+                    # Retry creation
+                    self.lock_dir.mkdir(parents=True, exist_ok=True)
+                    self.disabled = False
+                    return
+                except Exception as cleanup_error:
+                    logger.error(f"Cleanup failed: {cleanup_error}")
+            
+            logger.error(f"Failed to create lock directory {self.lock_dir}: {e}. Disabling CrossProcessLock.")
+            self.disabled = True
 
     def _get_lock_path(self, key: str) -> Path:
         """Get the lock file path for a given key."""
@@ -370,6 +392,10 @@ class CrossProcessLock:
         Raises:
             asyncio.TimeoutError: If lock cannot be acquired within timeout
         """
+        if getattr(self, "disabled", False):
+            yield
+            return
+
         lock_path = self._get_lock_path(key)
         lock_file = None
         acquired = False
