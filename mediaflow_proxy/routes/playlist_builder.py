@@ -19,156 +19,127 @@ def rewrite_m3u_links_streaming(
     m3u_lines_iterator: Iterator[str], base_url: str, api_password: Optional[str]
 ) -> Iterator[str]:
     """
-    Riscrive i link da un iteratore di linee M3U secondo le regole specificate,
-    includendo gli headers da #EXTVLCOPT e #EXTHTTP. Yields rewritten lines.
+    Riscrive i link da un iteratore di linee M3U raggruppando per entry (#EXTINF).
+    Gestisce correttamente gli header e le proprietà KODI anche se appaiono dopo l'URL.
     """
-    current_ext_headers: Dict[str, str] = {}  # Dizionario per conservare gli headers dalle direttive
-    current_kodi_props: Dict[str, str] = {}  # Dizionario per conservare le proprietà KODI
+    current_entry_lines = []
 
-    for line_with_newline in m3u_lines_iterator:
-        line_content = line_with_newline.rstrip("\n")
-        logical_line = line_content.strip()
+    def process_entry(entry_lines):
+        if not entry_lines:
+            return []
 
-        is_header_tag = False
-        if logical_line.startswith("#EXTVLCOPT:"):
-            # Yield the original line to preserve it
-            yield line_with_newline
+        headers = {}
+        kodi_props = {}
+        url_idx = -1
+        processed_lines = []
 
-            is_header_tag = True
-            try:
-                option_str = logical_line.split(":", 1)[1]
-                if "=" in option_str:
-                    key_vlc, value_vlc = option_str.split("=", 1)
-                    key_vlc = key_vlc.strip()
-                    value_vlc = value_vlc.strip()
+        # Primo passaggio: raccogli info e trova l'URL
+        for idx, line in enumerate(entry_lines):
+            logical_line = line.strip()
+            if not logical_line:
+                continue
 
-                    # Gestione speciale per http-header che contiene "Key: Value"
-                    if key_vlc == "http-header" and ":" in value_vlc:
-                        header_key, header_value = value_vlc.split(":", 1)
-                        header_key = header_key.strip()
-                        header_value = header_value.strip()
-                        current_ext_headers[header_key] = header_value
-                    elif key_vlc.startswith("http-"):
-                        # Gestisce http-user-agent, http-referer etc.
-                        header_key = key_vlc[len("http-") :]
-                        current_ext_headers[header_key] = value_vlc
-            except Exception as e:
-                logger.error(f"⚠️ Error parsing #EXTVLCOPT '{logical_line}': {e}")
+            if logical_line.startswith("#EXTINF:"):
+                processed_lines.append(line)
+            elif logical_line.startswith("#EXTVLCOPT:"):
+                processed_lines.append(line)
+                try:
+                    option_str = logical_line.split(":", 1)[1]
+                    if "=" in option_str:
+                        key_vlc, value_vlc = option_str.split("=", 1)
+                        key_vlc, value_vlc = key_vlc.strip(), value_vlc.strip()
+                        if key_vlc == "http-header" and ":" in value_vlc:
+                            h_key, h_val = value_vlc.split(":", 1)
+                            headers[h_key.strip()] = h_val.strip()
+                        elif key_vlc.startswith("http-"):
+                            headers[key_vlc[len("http-") :]] = value_vlc
+                except Exception:
+                    pass
+            elif logical_line.startswith("#EXTHTTP:"):
+                processed_lines.append(line)
+                try:
+                    json_str = logical_line.split(":", 1)[1]
+                    headers.update(json.loads(json_str))
+                except Exception:
+                    pass
+            elif logical_line.startswith("#KODIPROP:"):
+                processed_lines.append(line)
+                try:
+                    prop_str = logical_line.split(":", 1)[1]
+                    if "=" in prop_str:
+                        k_key, k_val = prop_str.split("=", 1)
+                        kodi_props[k_key.strip()] = k_val.strip()
+                except Exception:
+                    pass
+            elif logical_line.startswith("http"):
+                url_idx = len(processed_lines)
+                processed_lines.append(line)
+            elif logical_line.startswith("#"):
+                processed_lines.append(line)
 
-        elif logical_line.startswith("#EXTHTTP:"):
-            # Yield the original line to preserve it
-            yield line_with_newline
+        if url_idx == -1:
+            return entry_lines
 
-            is_header_tag = True
-            try:
-                json_str = logical_line.split(":", 1)[1]
-                # Sostituisce tutti gli header correnti con quelli del JSON
-                current_ext_headers = json.loads(json_str)
-            except Exception as e:
-                logger.error(f"⚠️ Error parsing #EXTHTTP '{logical_line}': {e}")
-                current_ext_headers = {}  # Resetta in caso di errore
-
-        elif logical_line.startswith("#KODIPROP:"):
-            # Yield the original line to preserve it
-            yield line_with_newline
-
-            is_header_tag = True
-            try:
-                prop_str = logical_line.split(":", 1)[1]
-                if "=" in prop_str:
-                    key_kodi, value_kodi = prop_str.split("=", 1)
-                    current_kodi_props[key_kodi.strip()] = value_kodi.strip()
-            except Exception as e:
-                logger.error(f"⚠️ Error parsing #KODIPROP '{logical_line}': {e}")
-
-        if is_header_tag:
-            continue
-
-        if (
-            logical_line
-            and not logical_line.startswith("#")
-            and ("http://" in logical_line or "https://" in logical_line)
-        ):
-            # Determine the base proxy URL
-            manifest_type = current_kodi_props.get("inputstream.adaptive.manifest_type", "").lower()
-
-            if "pluto.tv" in logical_line:
-                processed_url_content = logical_line
-            elif "vavoo.to" in logical_line:
-                encoded_url = urllib.parse.quote(logical_line, safe="")
-                processed_url_content = f"{base_url}/proxy/hls/manifest.m3u8?d={encoded_url}"
-            elif "vixsrc.to" in logical_line:
-                encoded_url = urllib.parse.quote(logical_line, safe="")
-                processed_url_content = f"{base_url}/extractor/video?host=VixCloud&redirect_stream=true&d={encoded_url}&max_res=true&no_proxy=true"
-            elif manifest_type == "mpd" or ".mpd" in logical_line:
-                # Extract DRM parameters from MPD URL if present
-                from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-
-                parsed_url = urlparse(logical_line)
-                query_params = parse_qs(parsed_url.query)
-
-                key_id = query_params.get("key_id", [None])[0]
-                key = query_params.get("key", [None])[0]
-
-                # Remove DRM params from original URL
-                clean_query_params = {k: v for k, v in query_params.items() if k not in ["key_id", "key"]}
-                clean_query = urlencode(clean_query_params, doseq=True)
-                clean_url = urlunparse(
-                    (
-                        parsed_url.scheme,
-                        parsed_url.netloc,
-                        parsed_url.path,
-                        parsed_url.params,
-                        clean_query,
-                        "",
-                    )
-                )
-
-                encoded_clean_url = urllib.parse.quote(clean_url, safe="")
-                processed_url_content = f"{base_url}/proxy/mpd/manifest.m3u8?d={encoded_clean_url}"
-
-                if key_id:
-                    processed_url_content += f"&key_id={key_id}"
-                if key:
-                    processed_url_content += f"&key={key}"
-            elif ".m3u8" in logical_line or ".php" in logical_line:
-                encoded_url = urllib.parse.quote(logical_line, safe="")
-                processed_url_content = f"{base_url}/proxy/hls/manifest.m3u8?d={encoded_url}"
-            else:
-                # Default fallback
-                encoded_url = urllib.parse.quote(logical_line, safe="")
-                processed_url_content = f"{base_url}/proxy/hls/manifest.m3u8?d={encoded_url}"
-
-            # Add keys from #KODIPROP if present
-            license_key = current_kodi_props.get("inputstream.adaptive.license_key")
-            if license_key and ":" in license_key:
-                key_id_kodi, key_kodi = license_key.split(":", 1)
-                if "&key_id=" not in processed_url_content:
-                    processed_url_content += f"&key_id={key_id_kodi}"
-                if "&key=" not in processed_url_content:
-                    processed_url_content += f"&key={key_kodi}"
-
-            # Applica gli header raccolti prima di api_password
-            if current_ext_headers:
-                header_params_str = "".join(
-                    [
-                        f"&h_{urllib.parse.quote(key)}={urllib.parse.quote(value)}"
-                        for key, value in current_ext_headers.items()
-                    ]
-                )
-                processed_url_content += header_params_str
-                current_ext_headers = {}
-
-            # Resetta le proprietà KODI dopo averle usate
-            current_kodi_props = {}
-
-            # Aggiungi api_password sempre alla fine
-            if api_password:
-                processed_url_content += f"&api_password={api_password}"
-
-            yield processed_url_content + "\n"
+        # Secondo passaggio: riscrivi l'URL
+        original_url = processed_lines[url_idx].strip()
+        manifest_type = kodi_props.get("inputstream.adaptive.manifest_type", "").lower()
+        
+        processed_url = original_url
+        if "pluto.tv" in original_url:
+            pass
+        elif "vavoo.to" in original_url:
+            encoded = urllib.parse.quote(original_url, safe="")
+            processed_url = f"{base_url}/proxy/hls/manifest.m3u8?d={encoded}"
+        elif "vixsrc.to" in original_url:
+            encoded = urllib.parse.quote(original_url, safe="")
+            processed_url = f"{base_url}/extractor/video?host=VixCloud&redirect_stream=true&d={encoded}&max_res=true&no_proxy=true"
+        elif manifest_type == "mpd" or ".mpd" in original_url:
+            from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+            parsed = urlparse(original_url)
+            query = parse_qs(parsed.query)
+            key_id = query.get("key_id", [None])[0]
+            key = query.get("key", [None])[0]
+            
+            clean_q = urlencode({k: v for k, v in query.items() if k not in ["key_id", "key"]}, doseq=True)
+            clean_url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, clean_q, ""))
+            
+            processed_url = f"{base_url}/proxy/mpd/manifest.m3u8?d={urllib.parse.quote(clean_url, safe='')}"
+            if key_id: processed_url += f"&key_id={key_id}"
+            if key: processed_url += f"&key={key}"
         else:
-            yield line_with_newline
+            encoded = urllib.parse.quote(original_url, safe="")
+            processed_url = f"{base_url}/proxy/hls/manifest.m3u8?d={encoded}"
+
+        # Aggiungi chiavi KODI
+        license_key = kodi_props.get("inputstream.adaptive.license_key")
+        if license_key and ":" in license_key:
+            kid, k = license_key.split(":", 1)
+            if "&key_id=" not in processed_url: processed_url += f"&key_id={kid}"
+            if "&key=" not in processed_url: processed_url += f"&key={k}"
+
+        # Aggiungi Headers
+        if headers:
+            h_str = "".join([f"&h_{urllib.parse.quote(k)}={urllib.parse.quote(v)}" for k, v in headers.items()])
+            processed_url += h_str
+
+        if api_password:
+            processed_url += f"&api_password={api_password}"
+
+        processed_lines[url_idx] = processed_url + "\n"
+        return processed_lines
+
+    for line in m3u_lines_iterator:
+        if line.strip().startswith("#EXTINF:"):
+            for p_line in process_entry(current_entry_lines):
+                yield p_line
+            current_entry_lines = [line]
+        elif line.strip().startswith("#EXTM3U"):
+            yield line
+        else:
+            current_entry_lines.append(line)
+
+    for p_line in process_entry(current_entry_lines):
+        yield p_line
 
 
 async def async_download_m3u_playlist(url: str) -> list[str]:
@@ -198,24 +169,19 @@ async def async_download_m3u_playlist(url: str) -> list[str]:
 def parse_channel_entries(lines: list[str]) -> list[list[str]]:
     """
     Analizza le linee di una playlist M3U e le raggruppa in entry di canali.
-    Ogni entry è una lista di linee che compongono un singolo canale
-    (da #EXTINF fino all'URL, incluse le righe intermedie).
+    Ogni entry contiene tutto ciò che si trova tra un #EXTINF e il successivo.
     """
     entries = []
     current_entry = []
     for line in lines:
-        stripped_line = line.strip()
-        if stripped_line.startswith("#EXTINF:"):
-            if current_entry:  # In caso di #EXTINF senza URL precedente
-                logger.warning(
-                    f"Found a new #EXTINF tag before a URL was found for the previous entry. Discarding: {current_entry}"
-                )
+        if line.strip().startswith("#EXTINF:"):
+            if current_entry:
+                entries.append(current_entry)
             current_entry = [line]
         elif current_entry:
             current_entry.append(line)
-            if stripped_line and not stripped_line.startswith("#"):
-                entries.append(current_entry)
-                current_entry = []
+    if current_entry:
+        entries.append(current_entry)
     return entries
 
 
