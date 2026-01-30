@@ -583,10 +583,13 @@ async def playlist_endpoint(
     return await get_playlist(request, playlist_params, proxy_headers)
 
 
+
 @proxy_router.get("/mpd/segment.mp4")
+@proxy_router.get("/mpd/segment.mp4/{filename:path}")
 async def segment_endpoint(
     segment_params: Annotated[MPDSegmentParams, Query()],
     proxy_headers: Annotated[ProxyRequestHeaders, Depends(get_proxy_headers)],
+    filename: str = None,
 ):
     """
     Retrieves and processes a media segment, decrypting it if necessary.
@@ -594,6 +597,7 @@ async def segment_endpoint(
     Args:
         segment_params (MPDSegmentParams): The parameters for the segment request.
         proxy_headers (ProxyRequestHeaders): The headers to include in the request.
+        filename (str, optional): Filename for compatibility (ignored, used for URL routing).
 
     Returns:
         Response: The HTTP response with the processed segment.
