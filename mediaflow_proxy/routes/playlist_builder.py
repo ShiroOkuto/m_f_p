@@ -160,24 +160,41 @@ async def async_download_m3u_playlist(url: str) -> list[str]:
     return lines
 
 
+def get_entry_name(entry_lines: list[str]) -> str:
+    """
+    Estrae il nome del canale da un'entry M3U (linea #EXTINF).
+    """
+    for line in entry_lines:
+        if line.strip().startswith("#EXTINF:"):
+            # Il nome è solitamente dopo l'ultima virgola
+            parts = line.rsplit(",", 1)
+            if len(parts) > 1:
+                return parts[1].strip()
+    return ""
+
+
 def parse_channel_entries(lines: list[str]) -> list[list[str]]:
     """
     Analizza le linee di una playlist M3U e le raggruppa in entry di canali.
-    Ogni entry contiene tutto ciò che si trova tra un #EXTINF e il successivo.
+    Un'entry inizia con #EXTINF e termina con l'URL del canale.
     """
     entries = []
     current_entry = []
     for line in lines:
-        if line.strip().startswith("#EXTINF:"):
-            if current_entry:
-                entries.append(current_entry)
-            current_entry = [line]
-        elif current_entry:
-            current_entry.append(line)
-        elif line.strip().startswith("#EXTM3U"): # Skip additional EXTM3U headers within the playlist
+        stripped = line.strip()
+        if not stripped:
             continue
-        else: # Handle lines before the first #EXTINF or other non-channel lines
-            current_entry.append(line)
+
+        if stripped.startswith("#EXTM3U") or stripped.startswith("#EXT-X-VERSION"):
+            continue
+
+        current_entry.append(line)
+
+        # Se non è un commento, è l'URL: chiudiamo l'entry
+        if not stripped.startswith("#"):
+            entries.append(current_entry)
+            current_entry = []
+
     if current_entry:
         entries.append(current_entry)
     return entries
@@ -190,14 +207,14 @@ async def async_generate_combined_playlist(playlist_definitions: list[str], base
         url_str = definition
         sort = False
         proxy = True
-        
+
         if definition.startswith("sort:"):
             sort = True
-            definition = definition[len("sort:"):]
-            
+            definition = definition[len("sort:") :]
+
         if definition.startswith("no_proxy:"):
             proxy = False
-            url_str = definition[len("no_proxy:"):]
+            url_str = definition[len("no_proxy:") :]
         else:
             url_str = definition
 
@@ -207,8 +224,13 @@ async def async_generate_combined_playlist(playlist_definitions: list[str], base
         *[async_download_m3u_playlist(task["url"]) for task in download_tasks], return_exceptions=True
     )
 
-    combined_sorted_entries = []
     header_yielded = False
+    global_sorted_entries = []
+    
+    # Sequenza di output: conterrà o un'entry singola (non ordinata) 
+    # o un segnaposto "GLOBAL_SORT_PLACEHOLDER" per il blocco ordinato.
+    output_sequence = []
+    sorted_placeholder_inserted = False
 
     for idx, result in enumerate(results):
         task_info = download_tasks[idx]
@@ -231,7 +253,7 @@ async def async_generate_combined_playlist(playlist_definitions: list[str], base
             header_yielded = True
 
         entries = parse_channel_entries(rest)
-        
+
         # Processa e riscrive se necessario
         processed_entries = []
         for entry in entries:
@@ -241,24 +263,29 @@ async def async_generate_combined_playlist(playlist_definitions: list[str], base
                 processed_entries.append(entry)
 
         if task_info["sort"]:
-            combined_sorted_entries.extend(processed_entries)
+            global_sorted_entries.extend(processed_entries)
+            if not sorted_placeholder_inserted:
+                output_sequence.append("GLOBAL_SORT_PLACEHOLDER")
+                sorted_placeholder_inserted = True
         else:
-            if not header_yielded:
-                yield "#EXTM3U\n"
-                header_yielded = True
-            for entry in processed_entries:
+            output_sequence.extend(processed_entries)
+
+    if not header_yielded:
+        yield "#EXTM3U\n"
+        header_yielded = True
+
+    # Ordina il bucket globale
+    global_sorted_entries.sort(key=lambda e: get_entry_name(e).lower())
+
+    # Genera la playlist finale seguendo la sequenza
+    for item in output_sequence:
+        if item == "GLOBAL_SORT_PLACEHOLDER":
+            for entry in global_sorted_entries:
                 for line in entry:
                     yield line
-
-    if combined_sorted_entries:
-        if not header_yielded:
-            yield "#EXTM3U\n"
-            header_yielded = True
-            
-        # Ordina per nome canale (prima riga dell'entry, dopo la virgola)
-        combined_sorted_entries.sort(key=lambda e: e[0].split(",")[-1].strip() if "," in e[0] else e[0])
-        for entry in combined_sorted_entries:
-            for line in entry:
+        else:
+            # item è un'entry di canale singola (lista di stringhe)
+            for line in item:
                 yield line
 
 
