@@ -63,7 +63,13 @@ async def process_manifest(
             # Start pre-buffering in background
             asyncio.create_task(dash_prebuffer.prebuffer_dash_manifest(mpd_url, headers))
 
-    return Response(content=hls_content, media_type="application/vnd.apple.mpegurl", headers=proxy_headers.response)
+    # Apply standard response headers (CORS, Stremio logic, etc.)
+    response_headers = apply_header_manipulation(
+        {"content-disposition": "inline", "content-type": "application/vnd.apple.mpegurl"},
+        proxy_headers,
+        include_propagate=False,
+    )
+    return Response(content=hls_content, headers=response_headers)
 
 
 async def process_playlist(
@@ -168,7 +174,10 @@ async def process_segment(
              # Fallback: serve fMP4 if remux fails
              logger.warning("FFmpeg remux failed, serving raw fMP4")
 
-    response_headers = apply_header_manipulation({}, proxy_headers)
+    extension = "ts" if mimetype == "video/MP2T" else "mp4"
+    response_headers = apply_header_manipulation(
+        {"content-disposition": f'attachment; filename="segment.{extension}"'}, proxy_headers
+    )
     return Response(content=decrypted_content, media_type=mimetype, headers=response_headers)
 
 async def remux_to_ts(content: bytes) -> Optional[bytes]:
@@ -293,7 +302,7 @@ def build_hls(
     Returns:
         str: The HLS manifest as a string.
     """
-    hls = ["#EXTM3U", "#EXT-X-VERSION:6"]
+    hls = ["#EXTM3U", "#EXT-X-VERSION:3"]
     query_params = dict(request.query_params)
 
     # Preserve skip parameter in query params so it propagates to playlists
@@ -409,7 +418,7 @@ def build_hls_playlist(
     Returns:
         str: The HLS playlist as a string.
     """
-    hls = ["#EXTM3U", "#EXT-X-VERSION:6"]
+    hls = ["#EXTM3U", "#EXT-X-VERSION:3"]
 
     added_segments = 0
     skipped_segments = 0

@@ -305,6 +305,7 @@ async def acestream_segment_proxy(
                 "content-type": mime_type,
                 "cache-control": "public, max-age=3600",
                 "access-control-allow-origin": "*",
+                "content-disposition": f'attachment; filename="segment.{ext}"',
             }
             response_headers = apply_header_manipulation(base_headers, proxy_headers)
             return Response(content=segment_data, media_type=mime_type, headers=response_headers)
@@ -320,6 +321,7 @@ async def acestream_segment_proxy(
             "content-type": mime_type,
             "cache-control": "public, max-age=3600",
             "access-control-allow-origin": "*",
+            "content-disposition": f'attachment; filename="segment.{ext}"',
         }
         response_headers = apply_header_manipulation(base_headers, proxy_headers)
 

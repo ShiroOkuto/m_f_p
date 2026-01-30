@@ -442,6 +442,7 @@ async def hls_segment_proxy(
                 "access-control-allow-origin": "*",
                 "access-control-expose-headers": "Content-Length, Content-Type, Content-Range, Accept-Ranges, Date",
                 "accept-ranges": "bytes",
+                "content-disposition": f'attachment; filename="segment.{extension}"',
             }
             response_headers = apply_header_manipulation(base_headers, proxy_headers)
             return Response(content=segment_data, media_type=mime_type, headers=response_headers)

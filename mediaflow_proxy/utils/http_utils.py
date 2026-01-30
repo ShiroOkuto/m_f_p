@@ -645,10 +645,28 @@ def apply_header_manipulation(
     """
     remove_set = set(h.lower() for h in proxy_headers.remove)
     result = {k: v for k, v in base_headers.items() if k.lower() not in remove_set}
+    
     # Apply propagate headers first (for segments), then response headers (response takes precedence)
     if include_propagate:
         result.update(proxy_headers.propagate)
     result.update(proxy_headers.response)
+
+    # --- EXOPLAYER & STREMIO COMPATIBILITY FIXES ---
+    # Mandatory CORS headers for ExoPlayer
+    result["access-control-allow-origin"] = "*"
+    result["access-control-expose-headers"] = "Content-Length, Content-Type, Content-Range, Accept-Ranges, Date"
+    
+    # Ensure accept-ranges is signaled if not explicitly removed
+    if "accept-ranges" not in result and "accept-ranges" not in remove_set:
+        result["accept-ranges"] = "bytes"
+
+    # Stremio-specific cache headers to prevent stale segments on live streams
+    user_agent = proxy_headers.request.get("user-agent", "").lower()
+    if "stremio" in user_agent:
+        result["cache-control"] = "no-cache, no-store, must-revalidate"
+        result["pragma"] = "no-cache"
+        result["expires"] = "0"
+    
     return result
 
 

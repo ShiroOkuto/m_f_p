@@ -298,15 +298,10 @@ def prepare_response_headers(
         response_headers.update(propagate_headers)
     response_headers.update(proxy_response_headers)
 
-    # Add mandatory ExoPlayer/CORS headers
-    response_headers["access-control-allow-origin"] = "*"
-    response_headers["access-control-expose-headers"] = "Content-Length, Content-Type, Content-Range, Accept-Ranges, Date"
-    
-    # Ensure accept-ranges is set to bytes if not already present, as ExoPlayer expects this for segments
-    if "accept-ranges" not in response_headers:
-        response_headers["accept-ranges"] = "bytes"
-
-    return response_headers
+    # Use apply_header_manipulation to add mandatory CORS and Stremio-specific headers
+    # We pass an empty dict to ProxyRequestHeaders for request as we only care about the UA from the session if available,
+    # but since we already have the manipulated headers, we just want to apply the CORS/Cache logic.
+    return apply_header_manipulation(response_headers, ProxyRequestHeaders({}, {}, [], propagate_headers or {}))
 
 
 async def proxy_stream(
