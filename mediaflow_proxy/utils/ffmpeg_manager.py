@@ -99,9 +99,7 @@ class FFmpegManager:
             "ffmpeg",
             "-hide_banner",
             "-loglevel", "warning",
-            # --- CRITICAL: Timestamp and sync fixes ---
-            "-fflags", "+genpts", # Minimal flags: generate PTS if missing, trust source otherwise
-            "-analyzeduration", "5000000", # Reduced to 5MB for faster startup
+            "-analyzeduration", "5000000",
             "-probesize", "5000000",
             # --- Network resilience ---
             "-reconnect", "1",
@@ -133,6 +131,8 @@ class FFmpegManager:
             except Exception as e:
                 logger.error(f"Error parsing clearkey: {e}")
 
+        # Increase input buffer to prevent packet drops
+        cmd.extend(["-thread_queue_size", "4096"])
         cmd.extend(["-i", url])
 
         # Explicit mapping to ensure video is selected
@@ -151,7 +151,6 @@ class FFmpegManager:
         cmd.extend([
             "-bsf:v", "h264_mp4toannexb",
             "-bsf:a", "aac_adtstoasc", # Fix audio bitstream for TS
-            "-avoid_negative_ts", "make_zero",
             "-max_muxing_queue_size", "4096",
             "-f", "hls",
             "-hls_time", "4", # Standard 4s segments
