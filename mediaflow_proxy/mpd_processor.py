@@ -153,7 +153,7 @@ async def process_segment(
             decrypted_content = init_content + segment_content
 
     # --- LEGACY REMUXING (FFmpeg Segment Wrapper) ---
-    # Converts fMP4 to MPEG-TS to fix timestamp issues, matching EasyProxy Legacy Mode
+    # Converts fMP4 to MPEG-TS to fix timestamp issues for legacy player compatibility
     # NOTE: use_map=False ensures init+segment are already combined (self-contained segments)
     if settings.remux_to_ts and ("video" in mimetype or "audio" in mimetype):
         remuxed_content = await remux_to_ts(decrypted_content)
@@ -169,7 +169,7 @@ async def process_segment(
 async def remux_to_ts(content: bytes) -> Optional[bytes]:
     """
     Remuxes content to MPEG-TS using FFmpeg via pipe.
-    Exact copy of EasyProxy's _remux_to_ts implementation.
+    Converts fMP4 segments to MPEG-TS for legacy player compatibility.
     """
     try:
         logger.info(f"Starting FFmpeg segment remux, input size: {len(content)} bytes")
