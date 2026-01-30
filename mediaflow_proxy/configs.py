@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     m3u8_content_routing: Literal["mediaflow", "stremio", "direct"] = (
         "mediaflow"  # Routing strategy for M3U8 content URLs: "mediaflow", "stremio", or "direct"
     )
-    enable_hls_prebuffer: bool = True  # Whether to enable HLS pre-buffering for improved streaming performance.
+    enable_hls_prebuffer: bool = False  # Whether to enable HLS pre-buffering for improved streaming performance.
     livestream_start_offset: (
         float | None
     ) = -18  # Default start offset for live streams (e.g., -18 to start 18 seconds behind live edge). Applies to HLS and MPD live playlists. Set to None to disable.
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     hls_prebuffer_emergency_threshold: int = 90  # Emergency threshold percentage to trigger aggressive cache cleanup.
     hls_prebuffer_inactivity_timeout: int = 60  # Seconds of inactivity before stopping playlist refresh loop.
     hls_segment_cache_ttl: int = 300  # TTL (seconds) for cached HLS segments; 300s (5min) for VOD, lower for live.
-    enable_dash_prebuffer: bool = True  # Whether to enable DASH pre-buffering for improved streaming performance.
+    enable_dash_prebuffer: bool = False  # Whether to enable DASH pre-buffering for improved streaming performance.
     dash_prebuffer_segments: int = 5  # Number of segments to pre-buffer ahead.
     dash_prebuffer_cache_size: int = 50  # Maximum number of segments to cache in memory.
     dash_prebuffer_max_memory_percent: int = 80  # Maximum percentage of system memory to use for DASH pre-buffer cache.
@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     mpd_live_playlist_depth: int = 8  # Number of recent segments to expose per live playlist variant.
 
     # FFmpeg Transcoding settings
+    remux_to_ts: bool = False  # Enable FFmpeg segment remuxing (fMP4 to MPEG-TS) for player compatibility.
     ffmpeg_temp_dir: str = "temp_ffmpeg"  # Directory to store temporary HLS segments.
     ffmpeg_idle_timeout: int = 120  # Seconds of inactivity before terminating an idle FFmpeg stream.
 
