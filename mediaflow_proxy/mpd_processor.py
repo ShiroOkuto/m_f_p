@@ -175,12 +175,17 @@ async def remux_to_ts(content: bytes) -> Optional[bytes]:
         logger.info(f"Starting FFmpeg segment remux, input size: {len(content)} bytes")
         cmd = [
             'ffmpeg',
+            '-hide_banner',
+            '-loglevel', 'error',
             '-y',
             '-i', 'pipe:0',
-            '-c', 'copy',
-            '-copyts',                      # Preserve timestamps to prevent freezing/gap issues
-            '-bsf:v', 'h264_mp4toannexb',   # Ensure video is Annex B (MPEG-TS requirement)
-            # Audio AAC to ADTS is handled automatically by FFmpeg for TS output
+            '-map', '0:v?',            # Map video if present
+            '-map', '0:a?',            # Map audio if present
+            '-c:v', 'copy',            # Copy video stream
+            '-c:a', 'aac',             # Transcode audio to AAC for better sync in MPEG-TS
+            '-b:a', '128k',            # Standard bitrate
+            '-avoid_negative_ts', 'make_zero', # Improve player compatibility
+            '-bsf:v', 'h264_mp4toannexb',     # Ensure video is Annex B
             '-f', 'mpegts',
             'pipe:1'
         ]
